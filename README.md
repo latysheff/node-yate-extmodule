@@ -38,7 +38,7 @@ const extmodule = require('yate-extmodule')
 let connection = extmodule.connect({host: '127.0.0.1', port: 5040}, () => {
   console.log('connected')
 })
-connection.subscribe('engine.timer', (message) => {
+connection.watch('engine.timer', (message) => {
   console.log('tick', message.time)
 })
 ```
@@ -76,7 +76,7 @@ const extmodule = require('yate-extmodule')
 let connection = extmodule.connect(() => {
   console.log('connected')
 })
-connection.subscribe('engine.timer', (message) => {
+connection.watch('engine.timer', (message) => {
   console.log('tick', message.time)
 })
 ```
@@ -154,7 +154,7 @@ Useful only in local mode, defaults to true.
 Example:
 ```
 const extmodule = require('yate-extmodule')
-let options = {
+let config = {
   host: '127.0.0.1',
   port: 5040,
   reconnect: true,
@@ -245,10 +245,10 @@ connection.setlocal('timeout', 1000, false, (error, value) => {
 })
 ```
 
-### Connection.getlocal(name, value, callback)
+### Connection.getlocal(name, callback)
 Get connection or engine parameter.
 
-Alias to setlocal(name, callback)
+Alias to setlocal(name, value, callback)
 
 Example:
 ```
