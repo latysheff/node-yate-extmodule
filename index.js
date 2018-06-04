@@ -10,6 +10,8 @@ const net = require('net')
 const events = require('events')
 const readline = require('readline')
 
+const DISPATCH_TIMEOUT = 10000
+
 class Connection extends events.EventEmitter {
   constructor(options, connectListener) {
     super()
@@ -85,7 +87,13 @@ class Connection extends events.EventEmitter {
       throw new Error('message name required')
     }
     let message = new Message(name, params)
-    this.handlers[message._id] = callback
+    if (typeof callback === 'function') {
+      this.handlers[message._id] = callback
+      setTimeout(() => {
+        callback(null, message.params, false)
+        delete this.handlers[message._id]
+      }, DISPATCH_TIMEOUT)
+    }
     if (this.connected) {
       this._dispatch(message)
     } else {
