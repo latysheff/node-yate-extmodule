@@ -38,7 +38,7 @@ class Connection extends events.EventEmitter {
       this.in_stream = process.stdin
       this.out_stream = process.stdout
       this.parameters.restart = true
-      console.log = console.dir = console.error = console.warn = function () {
+      console.log = console.dir = console.error = console.warn = function() {
       }
 
     } else {
@@ -90,8 +90,10 @@ class Connection extends events.EventEmitter {
     if (typeof callback === 'function') {
       this.handlers[message._id] = callback
       setTimeout(() => {
-        callback(null, message.params, false)
-        delete this.handlers[message._id]
+        if (message._id in this.handlers) {
+          callback(null, message.params, false)
+          delete this.handlers[message._id]
+        }
       }, DISPATCH_TIMEOUT)
     }
     if (this.connected) {
