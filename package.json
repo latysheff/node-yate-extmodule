@@ -1,6 +1,6 @@
 {
   "name": "yate-extmodule",
-  "version": "0.3.3",
+  "version": "1.0.0",
   "description": "Node.js library for YATE (Yet Another Telephone Engine)",
   "main": "index.js",
   "scripts": {
