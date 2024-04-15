@@ -1,6 +1,6 @@
 const extmodule = require('../index')
 
-let connection = extmodule.connect({
+const connection = extmodule.connect({
   path: '/tmp/extsocket',
   reconnect: true
 })

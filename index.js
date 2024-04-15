@@ -2,8 +2,9 @@
 
  Node.js library for YATE (Yet Another Telephone Engine)
 
- Copyright (c) 2016-2018 Vladimir Latyshev
+ Copyright (c) 2016-2024 Vladimir Latyshev
 
+ See https://docs.yate.ro/wiki/External_module_command_flow
  */
 
 const net = require('net')
@@ -13,11 +14,11 @@ const readline = require('readline')
 const DISPATCH_TIMEOUT = 10000
 
 class Connection extends events.EventEmitter {
-  constructor(options, connectListener) {
+  constructor (options, connectListener) {
     super()
 
     if (typeof options === 'number') {
-      options = {port: options}
+      options = { port: options }
     } else if (typeof options === 'function') {
       connectListener = options
     }
@@ -26,21 +27,23 @@ class Connection extends events.EventEmitter {
     this.path = options.path
     this.port = options.port
     this.host = options.host || '127.0.0.1'
-    this.timeout = options.timeout || 500
-    this.reconnect = ('reconnect' in options) ? options.reconnect : true
+    this.reconnectTimeout = options.reconnectTimeout || 500
+    this.reconnect = options.reconnect !== false
     this.piped = !(this.port || this.path)
-    this.console = !!options.console
-    this.decorate = options.decorate || true
+    this.decorate = options.decorate !== false
+
     this.parameters = options.parameters || {}
+    for (const key in this.parameters) {
+      validateLocalValue(key, this.parameters[key])
+    }
     this.parameters.trackparam = this.parameters.trackparam || 'nodejs'
 
     if (this.piped) {
       this.in_stream = process.stdin
       this.out_stream = process.stdout
       this.parameters.restart = true
-      console.log = console.dir = console.error = console.warn = function() {
+      console.log = console.dir = console.error = console.warn = function () {
       }
-
     } else {
       this.network = {
         path: this.path,
@@ -58,8 +61,8 @@ class Connection extends events.EventEmitter {
     }
 
     this.queue = []
-    this.setlocals = {}
-    this.handlers = {}
+    this.setlocalCallbacks = {}
+    this.dispatchCallbacks = {}
     this.subscriptions = {}
     this.watchers = {}
 
@@ -68,7 +71,7 @@ class Connection extends events.EventEmitter {
     }
   }
 
-  connect(delay) {
+  connect (delay) {
     if (this.connected) return
     if (this.piped) {
       this.arg = process.argv[2]
@@ -82,17 +85,17 @@ class Connection extends events.EventEmitter {
     }
   }
 
-  dispatch(name, params, callback) {
+  dispatch (name, params, callback) {
     if (!((typeof name === 'string') && name)) {
       throw new Error('message name required')
     }
-    let message = new Message(name, params)
+    const message = new Message(name, params)
     if (typeof callback === 'function') {
-      this.handlers[message._id] = callback
+      this.dispatchCallbacks[message._id] = callback
       setTimeout(() => {
-        if (message._id in this.handlers) {
-          callback(null, message.params, false)
-          delete this.handlers[message._id]
+        if (message._id in this.dispatchCallbacks) { // still there
+          callback(new Error('timeout'))
+          delete this.dispatchCallbacks[message._id]
         }
       }, DISPATCH_TIMEOUT)
     }
@@ -104,23 +107,24 @@ class Connection extends events.EventEmitter {
     return message
   }
 
-  setlocal(name, value, callback) {
+  setlocal (name, value, callback) {
+    validateLocalValue(name, value)
     this.parameters[name] = value
-    this.setlocals[name] = callback
+    this.setlocalCallbacks[name] = callback
     if (this.connected) {
       this._setlocal(name, value)
     }
   }
 
-  getlocal(name, callback) {
+  getlocal (name, callback) {
     this.setlocal(name, '', callback)
   }
 
-  getconfig(section, key, callback) {
+  getconfig (section, key, callback) {
     this.getlocal('config.' + section + '.' + key, callback)
   }
 
-  subscribe(name, priority, filterParam, filterVal, listener) {
+  subscribe (name, priority, filterParam, filterVal, listener) {
     if (!((typeof name === 'string') && name)) {
       throw new Error('message name required')
     }
@@ -147,20 +151,20 @@ class Connection extends events.EventEmitter {
     if (this.subscriptions[name]) {
       throw new Error(`subscription to '${name}' already exists, unsubscribe first`)
     }
-    this.subscriptions[name] = {name, priority, filterParam, filterVal, listener}
+    this.subscriptions[name] = { name, priority, filterParam, filterVal, listener }
     if (this.connected) {
       this._install(name, priority, filterParam, filterVal)
     }
   }
 
-  unsubscribe(name) {
+  unsubscribe (name) {
     delete this.subscriptions[name]
     if (this.connected) {
       this._uninstall(name)
     }
   }
 
-  watch(name, listener) {
+  watch (name, listener) {
     if (!((typeof name === 'string') && name)) {
       throw new Error('message name required')
     }
@@ -184,24 +188,26 @@ class Connection extends events.EventEmitter {
     }
   }
 
-  unwatch(name) {
+  unwatch (name) {
     delete this.watchers[name]
     if (this.connected) {
       this._unwatch(name)
     }
   }
 
-  command(text, callback) {
-    this.dispatch('engine.command', {line: text}, (result, message, processed) => {
-      callback(!processed, result.slice(0, -2))
-    })
+  command (line, callback) {
+    this.dispatch('engine.command', { line }, callback)
   }
 
-  log(text) {
+  status (module, callback) {
+    this.dispatch('engine.status', { module }, callback)
+  }
+
+  log (text) {
     this._output(text)
   }
 
-  _connect() {
+  _connect () {
     if (this.connected) return
     if (this.connecting) return
     this.reconnecting = false
@@ -219,14 +225,14 @@ class Connection extends events.EventEmitter {
       this.connected = false
       this.emit('disconnect')
       if (this.reconnect) {
-        this.connect(this.timeout)
+        this.connect(this.reconnectTimeout)
       }
     })
 
     this.socket.on('error', (error) => {
       this.connected = false
       if (this.reconnect) {
-        this.connect(this.timeout)
+        this.connect(this.reconnectTimeout)
       } else {
         this.emit('error', error)
       }
@@ -236,88 +242,100 @@ class Connection extends events.EventEmitter {
       if (this.reconnect) {
         this.connect(100)
       }
-    }, this.timeout)
+    }, this.reconnectTimeout)
 
     this.socket.connect(this.network)
   }
 
-  _start() {
+  _start () {
     if (this.connected) return
     clearTimeout(this.timer)
     this.connecting = false
     this.reconnecting = false
     this.connected = true
-    let rl = readline.createInterface(this.in_stream)
+
+    const rl = readline.createInterface(this.in_stream)
     rl.on('line', (string) => {
       this._process(string)
     })
-    for (let key in this.parameters) {
+    rl.on('error', (error) => {
+      this.emit('error', error)
+    })
+
+    // resend parameters
+    for (const key in this.parameters) {
       this._setlocal(key, this.parameters[key])
     }
-    for (let key in this.subscriptions) {
-      let subscription = this.subscriptions[key]
-      let {name, priority, filterParam, filterVal} = subscription
+
+    // resubscribe
+    for (const key in this.subscriptions) {
+      const { name, priority, filterParam, filterVal } = this.subscriptions[key]
       this._install(name, priority, filterParam, filterVal)
     }
-    for (let name in this.watchers) {
-      let watcher = this.watchers[name]
-      this._watch(name, watcher)
+
+    // reinstall watchers
+    for (const name in this.watchers) {
+      const callback = this.watchers[name]
+      this._watch(name, callback)
     }
+
+    // send queued messages
     this.queue.forEach((message) => {
       this._dispatch(message)
     })
     this.queue = []
+
     this.emit('connect')
   }
 
-  _process(string) {
+  _process (string) {
     this.emit('raw', '< ' + string)
-    let message = new Message()
+    const message = new Message()
     message.parse(string, this.decorate)
     if (message.error) {
       this.emit('error', new Error(message.error))
       return
     }
     if (message._type === 'setlocal') {
-      let setlocal = this.setlocals[message._name]
-      if (typeof setlocal === 'function') {
-        setlocal(!message._success, message._value)
-        delete this.setlocals[message._name]
+      const callback = this.setlocalCallbacks[message._name]
+      if (typeof callback === 'function') {
+        const err = message._success ? null : new Error(`not processed ${message._type} ${message._name}`)
+        callback(err, message._value)
+        delete this.setlocalCallbacks[message._name]
       }
     } else if (message._type === 'notification') {
-      let watcher = this.watchers[message._name]
-      if (watcher) {
-        watcher(message.params, message._retval)
+      const listener = this.watchers[message._name]
+      if (typeof listener === 'function') {
+        listener(message.params, message._retval)
       }
     } else if (message._type === 'answer') {
-      let handler = this.handlers[message._id]
-      if (typeof handler === 'function') {
-        handler(message._retval, message.params, message._processed)
-        delete this.handlers[message._id]
+      const callback = this.dispatchCallbacks[message._id]
+      if (typeof callback === 'function') {
+        const err = message._processed ? null : new Error('not processed')
+        const retval = message._retval ? message._retval.trim() : null
+        callback(err, retval, message.params)
+        delete this.dispatchCallbacks[message._id]
       }
     } else {
-      let subscription = this.subscriptions[message._name]
+      const subscription = this.subscriptions[message._name]
       if (!subscription) return
       switch (message._type) {
         case 'install':
-          let name = subscription.name
-          let callback = subscription.callback
+          // confirmation for subscription ("install")
           if (!message._success) {
-            delete this.subscriptions[name]
-          }
-          if (typeof callback === 'function') {
-            callback(!message._success, message._priority)
+            delete this.subscriptions[subscription.name]
+            this.emit('warning', new Error(`not subscribed ${subscription.name}`))
           }
           break
         case 'incoming':
-          let listener = subscription.listener
-          if (typeof listener === 'function') {
-            let result = listener(message.params, message._retval)
-            if (typeof result !== 'object') {
-              result = {retval: result}
+          if (typeof subscription.listener === 'function') {
+            try {
+              // note: any existing retval also passed to listener
+              message._retval = subscription.listener(message.params, message._retval)
+              message._processed = true
+            } catch {
+              // todo debug
             }
-            message._processed = ('processed' in result) ? result.processed : true
-            message._retval = result.retval || message._retval || ''
             this._acknowledge(message)
           }
           break
@@ -325,29 +343,29 @@ class Connection extends events.EventEmitter {
     }
   }
 
-  _acknowledge(message) {
+  _acknowledge (message) {
     // %%<message:<id>:<processed>:[<name>]:<retvalue>[:<key>=<value>...]
     if (message._type !== 'incoming') return
-    let string = '%%<message:' + escape(message._id)
-      + ':' + Bool2str(message._processed)
-      + '::' + escape(message._retval)
-      + message.stringify(true, this.decorate)
+    const string = '%%<message:' + escape(message._id) +
+      ':' + Bool2str(message._processed) +
+      '::' + escape(message._retval) +
+      message.stringify(true, this.decorate)
     this._send(string)
     message._type = 'acknowledged'
   }
 
-  _dispatch(message) {
+  _dispatch (message) {
     // %%>message:<id>:<time>:<name>:<retvalue>[:<key>=<value>...]
     if (message._type !== 'outgoing') return
-    let string = '%%>message:' + escape(message._id)
-      + ':' + message._origin
-      + ':' + escape(message._name)
-      + ':' + message.stringify(false, this.decorate)
+    const string = '%%>message:' + escape(message._id) +
+      ':' + message._origin +
+      ':' + escape(message._name) +
+      ':' + message.stringify(false, this.decorate)
     this._send(string)
     message._type = 'enqueued'
   }
 
-  _install(name, priority, filter, filterval) {
+  _install (name, priority, filter, filterval) {
     // %%>install:[<priority>]:<name>[:<filter-name>[:<filter-value>]]
     if (filter && filterval) {
       this._send('%%>install:' + priority + ':' + escape(name) + ':' + filter + ':' + filterval)
@@ -356,34 +374,34 @@ class Connection extends events.EventEmitter {
     }
   }
 
-  _uninstall(name) {
+  _uninstall (name) {
     // %%>uninstall:<name>
     this._send('%%>uninstall:' + name)
   }
 
-  _watch(name) {
+  _watch (name) {
     // %%>watch:<name>
     this._send('%%>watch:' + name)
   }
 
-  _unwatch(name) {
+  _unwatch (name) {
     // %%>unwatch:<name>
     this._send('%%>unwatch:' + name)
   }
 
-  _output(string) {
+  _output (string) {
     // %%>output:arbitrary unescaped string
     ('' + string).split('\n').forEach((string) => {
       this._send('%%>output:' + string)
     })
   }
 
-  _setlocal(name, value) {
+  _setlocal (name, value) {
     // %%>setlocal:<name>:<value>
     this._send('%%>setlocal:' + name + ':' + value)
   }
 
-  _send(string) {
+  _send (string) {
     this.emit('raw', '> ' + string)
     if (this.out_stream) {
       this.out_stream.write(string + '\n')
@@ -392,7 +410,7 @@ class Connection extends events.EventEmitter {
 }
 
 class Message {
-  constructor(name, params) {
+  constructor (name, params) {
     this._name = name
     this._origin = Math.floor(Date.now() / 1000).toString()
     this._id = this._origin + process.hrtime()[1]
@@ -401,51 +419,51 @@ class Message {
     this.params = params || {}
   }
 
-  parse(string, decorate) {
-    let data_array = string.split(':')
-    switch (data_array[0]) {
+  parse (string, decorate) {
+    const dataArray = string.split(':')
+    switch (dataArray[0]) {
       case '%%>message':
         // %%>message:<id>:<time>:<name>:<retvalue>[:<key>=<value>...]
         this._type = 'incoming'
-        this._id = data_array[1]
-        this._origin = data_array[2]
-        this._name = data_array[3]
-        this._retval = unescape(data_array[4])
+        this._id = dataArray[1]
+        this._origin = dataArray[2]
+        this._name = dataArray[3]
+        this._retval = unescape(dataArray[4])
         break
       case '%%<message':
         // %%<message:<id>:<processed>:[<name>]:<retvalue>[:<key>=<value>...]
-        this._id = data_array[1]
+        this._id = dataArray[1]
         this._type = this._id ? 'answer' : 'notification'
-        this._processed = Str2bool(data_array[2])
-        this._name = data_array[3]
-        this._retval = unescape(data_array[4])
+        this._processed = Str2bool(dataArray[2])
+        this._name = dataArray[3]
+        this._retval = unescape(dataArray[4])
         break
       case '%%<install':
         // %%<install:<priority>:<name>:<success>
         this._type = 'install'
-        this._priority = data_array[1]
-        this._name = data_array[2]
-        this._success = Str2bool(data_array[3])
+        this._priority = dataArray[1]
+        this._name = dataArray[2]
+        this._success = Str2bool(dataArray[3])
         break
       case '%%<uninstall':
         // %%<uninstall:<priority>:<name>:<success>
         this._type = 'uninstall'
-        this._priority = data_array[1]
-        this._name = data_array[2]
-        this._success = data_array[3]
+        this._priority = dataArray[1]
+        this._name = dataArray[2]
+        this._success = dataArray[3]
         break
       case '%%<watch':
         // %%<watch:<name>:<success>
         this._type = 'watch'
-        this._name = data_array[1]
-        this._success = Str2bool(data_array[2])
+        this._name = dataArray[1]
+        this._success = Str2bool(dataArray[2])
         break
       case '%%<setlocal':
         // %%<setlocal:<name>:<value>:<success>
         this._type = 'setlocal'
-        this._name = data_array[1]
-        this._value = data_array[2]
-        this._success = Str2bool(data_array[3])
+        this._name = dataArray[1]
+        this._value = dataArray[2]
+        this._success = Str2bool(dataArray[3])
         break
       case 'Error in':
         this.error = 'string'
@@ -455,10 +473,10 @@ class Message {
         return
     }
     if (this._type === 'incoming' || this._type === 'answer' || this._type === 'notification') {
-      data_array.slice(5).forEach((item) => {
-        let pos = item.indexOf('=')
+      dataArray.slice(5).forEach((item) => {
+        const pos = item.indexOf('=')
         if (pos > 0) {
-          let key = item.substr(0, pos)
+          const key = item.substr(0, pos)
           if (!(key in Message.prototype)) {
             this.params[unescape(key)] = unescape(item.substr(pos + 1))
           }
@@ -470,13 +488,13 @@ class Message {
     }
   }
 
-  stringify(includeEmpty, decorate) {
+  stringify (includeEmpty, decorate) {
     if (decorate) {
       this.params = yatefy(this.params)
     }
     let result = ''
-    for (let key in this.params) {
-      let value = this.params[key].toString()
+    for (const key in this.params) {
+      const value = this.params[key].toString()
       if (value) {
         result += ':' + escape(key) + '=' + escape(value)
       } else if (includeEmpty) {
@@ -487,16 +505,11 @@ class Message {
   }
 }
 
-
-function escape(str, extra) {
-  if (str === null)
-    return ''
-  if (str === undefined)
-    return 'undefined'
-  if (str === true)
-    return 'true'
-  if (str === false)
-    return 'false'
+function escape (str, extra) {
+  if (str === null) { return '' }
+  if (str === undefined) { return 'undefined' }
+  if (str === true) { return 'true' }
+  if (str === false) { return 'false' }
   str = str.toString()
   let res = ''
   for (let idx = 0; idx < str.length; idx++) {
@@ -512,46 +525,47 @@ function escape(str, extra) {
   return res
 }
 
-
-function unescape(str) {
+function unescape (str) {
   let res = ''
   for (let idx = 0; idx < str.length; idx++) {
     let chr = str.charAt(idx)
     if (chr === '%') {
       idx++
       chr = str.charAt(idx)
-      if (chr !== '%')
-        chr = String.fromCharCode(chr.charCodeAt(0) - 64)
+      if (chr !== '%') { chr = String.fromCharCode(chr.charCodeAt(0) - 64) }
     }
     res += chr
   }
   return res
 }
 
-
-function Bool2str(bool) {
+function Bool2str (bool) {
   return bool ? 'true' : 'false'
 }
 
-
-function Str2bool(str) {
+function Str2bool (str) {
   return (str === 'true')
 }
 
+function yatefy (object, rootkey) {
+  const result = {}
+  const prefix = rootkey ? rootkey + '.' : ''
 
-function yatefy(object, rootkey) {
-  let result = {}
-  let prefix = rootkey ? rootkey + '.' : ''
-  for (let key in object) {
-    if (typeof object[key] === 'object') {
-      let subobject = yatefy(object[key], key)
-      for (let subkey in subobject) {
+  for (const key in object) {
+    let value = object[key]
+
+    if (Buffer.isBuffer(value)) {
+      value = hexlify(value)
+    }
+
+    if (typeof value === 'object' && value !== null) {
+      const subobject = yatefy(value, key)
+      for (const subkey in subobject) {
         result[prefix + subkey] = subobject[subkey]
       }
     } else {
-      let value = object[key].toString()
-      if (rootkey === key) {
-        result[key] = value
+      if (key === 'value') {
+        result[rootkey] = value
       } else {
         result[prefix + key] = value
       }
@@ -560,28 +574,37 @@ function yatefy(object, rootkey) {
   return result
 }
 
+function hexlify (byteArray, joiner = ' ') {
+  return Array.from(byteArray, function (byte) {
+    return ('0' + (byte & 0xFF).toString(16)).slice(-2)
+  }).join(joiner)
+}
 
-function beautify(object) {
-  let result = {}
-  for (let key in object) {
+function beautify (object) {
+  const result = {}
+  for (const key in object) {
     let value = object[key]
+
     if (value === 'false') {
       value = false
     } else if (value === 'true') {
       value = true
+    } else if (value.length > 4 && value.match(/[0-9a-f]{2}( [0-9a-f]{2})+/g)) {
+      value = unhexlify(value)
     }
+
     if (key.indexOf('.')) {
       key.split('.').reduce((object, key, index, arr) => {
         if (index === arr.length - 1) {
           if (typeof object === 'object' && key in object) {
-            object[key][key] = value
+            object[key].value = value
           } else {
             object[key] = value
           }
         } else {
           if (typeof object === 'object' && key in object) {
             if (typeof object[key] !== 'object') {
-              object[key] = {[key]: object[key]}
+              object[key] = { [key]: object[key] }
             }
           } else {
             object[key] = {}
@@ -596,21 +619,75 @@ function beautify(object) {
   return result
 }
 
+function unhexlify (str) {
+  return Buffer.from(str.replace(/ /g, ''), 'hex')
+}
 
-function connect(options, connectListener) {
-  let connection = new Connection(options, connectListener)
+/*
+https://docs.yate.ro/wiki/External_module_command_flow#Format_of_commands_and_notifications
+ */
+
+const LOCAL_PARAMETERS = {
+  id: 'string',
+  disconnected: 'boolean',
+  trackparam: 'string',
+  reason: 'string',
+  timeout: 'number',
+  timebomb: 'boolean',
+  bufsize: 'number',
+  setdata: 'boolean',
+  reenter: 'boolean',
+  selfwatch: 'boolean',
+  restart: 'boolean'
+}
+
+const ENGINE_PARAMETERS = {
+  version: 'string',
+  release: 'string',
+  nodename: 'string',
+  runid: 'number',
+  configname: 'string',
+  sharedpath: 'string',
+  configpath: 'string',
+  cfgsuffix: 'string',
+  modulepath: 'string',
+  modsuffix: 'string',
+  logfile: 'string',
+  clientmode: 'boolean',
+  supervised: 'boolean',
+  maxworkers: 'number'
+}
+
+function validateLocalValue (key, value) {
+  if (!value) {
+    const matchEngineParams = key.match(/^engine\.(.*)/)
+    if (matchEngineParams) {
+      const [, param] = matchEngineParams
+      if (param in ENGINE_PARAMETERS) {
+        return
+      }
+    } else {
+      const matchConfigSections = key.match(/^config\./)
+      if (matchConfigSections) {
+        return
+      }
+    }
+  }
+  if (!LOCAL_PARAMETERS[key]) {
+    throw new Error(`unknown local parameter "${key}"`)
+  }
+  const parameterType = LOCAL_PARAMETERS[key]
+  // eslint-disable-next-line valid-typeof
+  if (typeof value !== parameterType) {
+    throw new Error(`local parameter ${key} should be of type ${parameterType}`)
+  }
+}
+
+function connect (options, connectListener) {
+  const connection = new Connection(options, connectListener)
   connection.connect()
   return connection
 }
-
-
-if (process.platform === 'win32') {
-  let rl = readline.createInterface(process.stdin, process.stdout)
-  rl.on('SIGINT', () => {
-    process.emit('SIGINT')
-  })
-}
-
 
 module.exports = {
   connect,

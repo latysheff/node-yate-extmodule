@@ -3,6 +3,9 @@
   "version": "0.3.3",
   "description": "Node.js library for YATE (Yet Another Telephone Engine)",
   "main": "index.js",
+  "scripts": {
+    "test": "standard"
+  },
   "keywords": [
     "yate",
     "extmodule"
@@ -12,5 +15,8 @@
     "email": "latysheff@gmail.com"
   },
   "license": "MIT",
-  "repository": "https://github.com/latysheff/node-yate-extmodule.git"
+  "repository": "https://github.com/latysheff/node-yate-extmodule.git",
+  "devDependencies": {
+    "standard": "^17.1.0"
+  }
 }

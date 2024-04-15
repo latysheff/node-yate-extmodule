@@ -1,7 +1,7 @@
 const extmodule = require('../index')
 
-let connection = extmodule.connect({
-  host: '10.211.55.16',
+const connection = extmodule.connect({
+  host: '192.168.31.182',
   port: 5040,
   reconnect: true,
   parameters: {
@@ -30,7 +30,7 @@ connection.on('error', (error) => {
 
 connection.subscribe('engine.command', 50, (message, retval) => {
   console.log('> sniffed command', message, retval)
-  return {processed: false}
+  return { processed: false }
 })
 
 connection.getlocal('engine.logfile', (error, value) => {
@@ -45,11 +45,11 @@ connection.getconfig('telephony', 'number', (error, value) => {
   console.log(error, value)
 })
 
-connection.subscribe('my.message', 100, 'myparam', 'myvalue', (message, result) => {
-  console.log('-> received my.message', message, result)
+connection.subscribe('my.message', 100, 'myparam', 'myvalue', (message, retval) => {
+  console.log('-> received my.message', message, retval)
   message.myparam = 'newvalue'
   message.newparam = 'hello'
-  return {retval: 'hi', processed: false}
+  return 'hi'
 })
 
 connection.watch('my.message', (message, result) => {
@@ -62,12 +62,18 @@ connection.unwatch('my.message')
 //   console.log('tick', message.time)
 // })
 
-// connection.on('raw', (message) => {
-//   console.log(message)
-// })
+connection.on('raw', (message) => {
+  console.log(message)
+})
 
-connection.dispatch('my.message', {'myparam': 'myvalue'}, (result, message, processed) => {
-  console.log('-> result =', result, message, processed)
+connection.dispatch('empty.message.with.no.callback')
+
+connection.dispatch('my.message', { myparam: 'myvalue' }, (err, retval, message) => {
+  if (err) {
+    console.error(err)
+    return
+  }
+  console.log('-> result =', retval, message)
 })
 
 connection.command('sniffer on', (err, result) => {

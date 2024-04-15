@@ -1,13 +1,13 @@
 #!/usr/bin/node
 const extmodule = require('../index')
 
-let connection = extmodule.connect()
+const connection = extmodule.connect()
 
 connection.setlocal('trackparam', 'badguy')
 connection.setlocal('timeout', 100)
 
 connection.watch('engine.timer', (message) => {
-  connection.dispatch('my.timer', {'time': message.time - 10})
+  connection.dispatch('my.timer', { time: message.time - 10 })
 })
 
 connection.subscribe('my.message', 200, (message) => {

@@ -7,6 +7,11 @@ Yate's extmodule documentation [here][extmodule].
 Module supports local (piped) and socket operation modes. 
 In socket mode one application can control many Yate instances, if needed.
 
+## New API in version 1.0.0
+* Breaking changes in subscribe() - listener returns string or nothing as retval; message considered as processed if function doesn't throw
+* Breaking changes in dispatch() - callback signature matches (err, ...args)
+* Breaking changes in 'decoration' - root member now called 'value', not repeated section name, like gt.gt, see below
+
 ## Installation
 `npm install yate-extmodule`
 
@@ -111,11 +116,13 @@ Example:
         plan: 'isdn',
         translation: '0',
         encoding: 'bcd',
-        gt: '2002' },
+        value: '2002' },
      ssn: '6' } }
 ```
 
-Decoration also converts 'true' and 'false' values to boolean.
+Decoration converts 'true' and 'false' values to boolean.
+
+Decoration also auto-converts hex data in parameters (in form 'a0 b0', if length is 2 bytes or more) to Buffers and back.
 
 ## API
 
@@ -135,7 +142,8 @@ Main Connection class.
 Available options are:
 
 * port [number] Port the socket should connect to. If absent, pipe mode activates.
-* host [string] Host the socket should connect to. Default: 'localhost'.
+* host [string] Host the socket should connect to. Default: '127.0.0.1'.
+* reconnectTimeout [number] How much to wait until next attempt to connect. Default 500 ms.
 * reconnect [boolean] Automatically reconnect. Default: true. Doesn't work in local mode.
 * decorate [boolean] Enable or disable converting of dotted messages keys to objects. Default: true.
 * parameters [object] Easy way to set various parameters of connection. See also setlocal().
@@ -154,7 +162,7 @@ Useful only in local mode, defaults to true.
 Example:
 ```
 const extmodule = require('yate-extmodule')
-let config = {
+const config = {
   host: '127.0.0.1',
   port: 5040,
   reconnect: true,
@@ -164,7 +172,7 @@ let config = {
     bufsize: 32768
   }
 }
-let connection = extmodule.connect(config)
+const connection = extmodule.connect(config)
 ```
 
 ### Connection.connect()
@@ -180,12 +188,11 @@ Send message to Yate for processing
 Callback is optional, unless you care about the result of processing. 
 If you do, here are arguments:
 
-callback(retval, message, processed)
+callback(err, retval, message)
 
+* err - error (if not processed) or null
 * retval - return value of the message
 * message - updated message
-* processed - indicates whether message was finalized ('processed') by some Yate module or not
-
 
 ### Connection.subscribe(name, [priority, ][filterParam, filterVal, ]listener)
 Subscribe to process Yate messages having this name.
